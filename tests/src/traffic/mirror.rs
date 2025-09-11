@@ -66,6 +66,14 @@ async fn mirror_with_http_header_filter(
         )
         .await;
 
+    // Wait for mirrord layer to be fully initialized
+    mirror_process
+        .wait_for_line(Duration::from_secs(40), "Initializing mirrord-layer!")
+        .await;
+
+    // Give a small additional buffer for hooks to be fully set up
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
     mirror_process
         .wait_for_line(Duration::from_secs(40), "daemon subscribed")
         .await;
