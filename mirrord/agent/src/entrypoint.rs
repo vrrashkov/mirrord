@@ -532,6 +532,7 @@ impl ClientConnectionHandler {
                     )).await?;
                 }
             },
+            }
             ClientMessage::TcpSteal(message) => {
                 let error = match self.tcp_stealer_api.as_mut() {
                     Some(tcp_stealer_api) => tcp_stealer_api

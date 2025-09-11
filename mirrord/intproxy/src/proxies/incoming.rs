@@ -22,8 +22,8 @@ use mirrord_protocol::{
     tcp::{
         ChunkedRequest, ChunkedRequestBodyV1, ChunkedRequestErrorV1, ChunkedRequestErrorV2,
         ChunkedResponse, DaemonTcp, HttpRequest, HttpRequestMetadata, IncomingTrafficTransportType,
-        InternalHttpBodyFrame, InternalHttpRequest, LayerTcp, LayerTcpSteal, NewTcpConnectionV1,
-        NewTcpConnectionV2, TcpData,
+        InternalHttpBodyFrame, InternalHttpRequest, LayerTcp, LayerTcpSteal,
+        MIRROR_HTTP_FILTER_VERSION, MirrorType, NewTcpConnectionV1, NewTcpConnectionV2, TcpData,
     },
 };
 use semver::Version;
@@ -638,12 +638,37 @@ impl IncomingProxy {
         match message {
             IncomingProxyMessage::LayerRequest(message_id, layer_id, req) => match req {
                 IncomingRequest::PortSubscribe(subscribe) => {
-                    let msg = self.subscriptions.layer_subscribed(
-                        layer_id,
-                        message_id,
-                        subscribe,
-                        self.protocol_version.as_ref(),
-                    );
+                    // Check if HTTP filtering is requested but not supported
+                    if let PortSubscription::Mirror(MirrorType::FilteredHttp(_, _)) =
+                        &subscribe.subscription
+                    {
+                        if !self
+                            .protocol_version
+                            .as_ref()
+                            .is_some_and(|version| MIRROR_HTTP_FILTER_VERSION.matches(version))
+                        {
+                            // HTTP filtering requested but not supported - reject the subscription
+                            let response = ProxyToLayerMessage::Incoming(
+                                IncomingResponse::PortSubscribe(Err(ResponseError::NotImplemented)),
+                            );
+                            message_bus
+                                .send(ProxyMessage::ToLayer(ToLayer {
+                                    layer_id,
+                                    message_id,
+                                    message: response,
+                                }))
+                                .await;
+                            return Ok(());
+                        }
+
+                        tracing::debug!(
+                            "HTTP filter version check passed, proceeding with subscription"
+                        );
+                    }
+
+                    let msg = self
+                        .subscriptions
+                        .layer_subscribed(layer_id, message_id, subscribe);
 
                     if let Some(msg) = msg {
                         message_bus.send(msg).await;
@@ -707,9 +732,7 @@ impl IncomingProxy {
                     tracing::info!(?subscription, "Resubscribing after connection refresh");
 
                     message_bus
-                        .send(ProxyMessage::ToAgent(
-                            subscription.resubscribe_message(self.protocol_version.as_ref()),
-                        ))
+                        .send(ProxyMessage::ToAgent(subscription.resubscribe_message()))
                         .await
                 }
             }

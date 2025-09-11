@@ -448,10 +448,24 @@ pub(super) fn listen(sockfd: RawFd, backlog: c_int) -> Detour<i32> {
                 .copied()
                 .unwrap_or_else(|| requested_address.port());
 
-            common::make_proxy_request_with_response(PortSubscribe {
+            let subscription = setup.incoming_mode().subscription(mapped_port);
+            tracing::debug!("Creating PortSubscribe request for port {} with subscription: {:?}", mapped_port, subscription);
+            
+            let port_subscribe = PortSubscribe {
                 listening_on: address,
-                subscription: setup.incoming_mode().subscription(mapped_port),
-            })??;
+                subscription,
+            };
+            tracing::debug!("Sending PortSubscribe request: {:?}", port_subscribe);
+            
+            match common::make_proxy_request_with_response(port_subscribe) {
+                Ok(response) => {
+                    tracing::debug!("PortSubscribe request successful: {:?}", response);
+                }
+                Err(e) => {
+                    tracing::error!("PortSubscribe request failed: {:?}", e);
+                    return Detour::Error(e.into());
+                }
+            }
 
             // this log message is expected by some E2E tests
             tracing::debug!("daemon subscribed port {}", requested_address.port());

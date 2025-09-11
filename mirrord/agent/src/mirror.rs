@@ -96,13 +96,40 @@ impl TcpMirrorApi {
                 }
                 LayerTcp::PortSubscribeFilteredHttp(port, filter) => {
                     tracing::debug!(port = %port, filter = %filter, "Received PortSubscribeFilteredHttp");
+
                     // Convert from protocol HttpFilter to agent HttpFilter
-                    let agent_filter =
-                        HttpFilter::try_from(&filter).map_err(AgentError::InvalidHttpFilter)?;
+                    tracing::debug!("Converting protocol filter to agent filter");
+                    let agent_filter = match HttpFilter::try_from(&filter) {
+                        Ok(f) => {
+                            tracing::debug!("Successfully converted filter: {:?}", f);
+                            f
+                        }
+                        Err(e) => {
+                            tracing::error!("Failed to convert filter: {:?}", e);
+                            return Err(AgentError::InvalidHttpFilter(e));
+                        }
+                    };
+
+                    tracing::debug!("Inserting filter for port {}", port);
                     port_filters.insert(port, agent_filter);
 
-                    mirror_handle.mirror(port).await?;
+                    tracing::debug!("Starting mirror for port {}", port);
+                    match mirror_handle.mirror(port).await {
+                        Ok(()) => {
+                            tracing::debug!("Successfully started mirroring port {}", port);
+                        }
+                        Err(e) => {
+                            tracing::error!("Failed to start mirroring port {}: {:?}", port, e);
+                            return Err(AgentError::PortRedirectorError(e));
+                        }
+                    }
+
+                    tracing::debug!("Queueing SubscribeResult for port {}", port);
                     queued_messages.push_back(DaemonTcp::SubscribeResult(Ok(port)));
+                    tracing::debug!(
+                        "Successfully processed PortSubscribeFilteredHttp for port {}",
+                        port
+                    );
                 }
                 LayerTcp::PortUnsubscribe(port) => {
                     port_filters.remove(&port);
